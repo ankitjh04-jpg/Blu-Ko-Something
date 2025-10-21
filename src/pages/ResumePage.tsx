@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
-import { Plus, FileText } from "lucide-react";
+import { Plus, FileText, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { NavigationHeader } from "../components/shared/NavigationHeader";
 import ResumeCard from "../components/resume/ResumeCard";
 import ResumePreview from "../components/resume/ResumePreview";
 import { downloadAsHTML, downloadAsPDF } from "../utils/resumeDownload";
 import { Notification } from "../components/shared/Notification";
+import { resumeDataService } from "../services/resumeDataService";
 
 interface PersonalInfo {
   name: string;
@@ -68,6 +69,7 @@ export function ResumePage() {
     message: string;
     type: "success" | "error" | "info";
   } | null>(null);
+  const [showChatbotPrompt, setShowChatbotPrompt] = useState(false);
 
   const loadResumes = useCallback(async () => {
     setLoading(true);
@@ -97,13 +99,41 @@ export function ResumePage() {
 
   const generateResume = async () => {
     if (!user) return;
-    setGenerating(true);
+
+    const chatbotData = resumeDataService.getResumeData();
+    if (chatbotData) {
+      setGenerating(true);
+      const title = `Resume - ${new Date().toLocaleDateString()}`;
+      const result = await resumeDataService.saveResumeToDatabase(user.id, title);
+
+      if (result.success) {
+        setNotification({
+          message: "Resume created from chatbot data successfully!",
+          type: "success",
+        });
+        await loadResumes();
+      } else {
+        setNotification({
+          message: result.error || "Failed to create resume",
+          type: "error",
+        });
+      }
+      setGenerating(false);
+      return;
+    }
 
     const { data: profile } = await supabase
       .from("user_profiles")
       .select("*")
       .eq("id", user.id)
       .maybeSingle();
+
+    if (!profile || !profile.profile_completed) {
+      setShowChatbotPrompt(true);
+      return;
+    }
+
+    setGenerating(true);
 
     const { data: workExperiences } = await supabase
       .from("work_experiences")
@@ -399,6 +429,51 @@ export function ResumePage() {
           onClose={() => setSelectedResume(null)}
           isModal={true}
         />
+      )}
+
+      {showChatbotPrompt && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+          <div className="bg-[#003A6E] border border-[#6A7B93] border-opacity-20 rounded-2xl p-8 max-w-md w-full">
+            <div className="flex items-start gap-4 mb-6">
+              <AlertCircle className="text-[#FBC888] flex-shrink-0" size={32} />
+              <div>
+                <h3 className="text-2xl font-bold text-white mb-2">
+                  Profile Incomplete
+                </h3>
+                <p className="text-[#A8B8CC]">
+                  To generate a resume, please complete your profile or use our AI Assistant
+                  to collect your information through a guided conversation.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <button
+                onClick={() => {
+                  setShowChatbotPrompt(false);
+                  navigate("/chatbot");
+                }}
+                className="w-full bg-[#FBC888] hover:bg-[#FBC888]/90 text-[#002B5C] font-semibold px-6 py-3 rounded-lg transition-all duration-200"
+              >
+                Use AI Assistant
+              </button>
+              <button
+                onClick={() => {
+                  setShowChatbotPrompt(false);
+                  navigate("/profile");
+                }}
+                className="w-full bg-[#1E4C80] hover:bg-[#2A4F7A] text-white px-6 py-3 rounded-lg transition-all duration-200"
+              >
+                Complete Profile Manually
+              </button>
+              <button
+                onClick={() => setShowChatbotPrompt(false)}
+                className="w-full text-[#6A7B93] hover:text-white transition-colors py-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {notification && (
